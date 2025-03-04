@@ -1,114 +1,188 @@
-from playwright.sync_api import sync_playwright
+import asyncio
+from playwright.async_api import async_playwright
 
-def truncate_end(string, width):
-    if len(string) > width:
-        string = string[:width-3] + '...'
-    return string
-
-
-def convert_to_airform(url):
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto(url)
+class WebPageInteraction:
+    def __init__(self):
+        self.id_count = 0
+        self.clickable_ids = {}
         
+    # Open page
+    @classmethod
+    async def open(self):
+        self = WebPageInteraction()
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=False)
+        self.page = await self.browser.new_page()
+        return self
+    
+    # Function to check if an element is visible
+    async def is_visible(self, element):
+        return await element.evaluate("el => el.offsetWidth > 0 && el.offsetHeight > 0 && window.getComputedStyle(el).visibility !== 'hidden'")
+
+    # Function to truncate long strings
+    def truncate_string(self, s, max_length=30):
+        return s if len(s) <= max_length else f"...{s[-max_length:]}"
+
+    async def navigate(self, url):
+        await self.page.goto(url)
+
+    async def close(self):
+        await self.browser.close()
+
+    async def get_markdown(self, max_lines):
+        page_title = await self.page.title()
+        elements = await self.page.query_selector_all("body *")
+        markdown_lines = [f"title={page_title}"]
+        self.id_count = 0
+        self.clickable_ids = {}
+
+        for element in elements:
+            visible = await self.is_visible(element)
+            if visible:
+                tag_name = await element.evaluate("el => el.tagName.toLowerCase()")
+
+                # If tag is interactable element
+                if tag_name in ["input", "a", "select", "button", "img"]:
+                    self.clickable_ids[self.id_count] = element
+                    id_suffix = f"${self.id_count}"
+                    if tag_name == 'img':
+                        src = await element.evaluate("el => el.src")
+                        alt = await element.evaluate("el => el.alt") or "Image"
+                        truncated_src = self.truncate_string(src)
+                        markdown_lines.append(f"![{alt}]({truncated_src}){id_suffix}")
+                    elif tag_name == 'input':
+                        input_type = await element.evaluate("el => el.type")
+                        input_placeholder = await element.evaluate("el => el.placeholder") or ""
+                        label = await element.evaluate("el => el.previousElementSibling ? el.previousElementSibling.innerText : ''")
+                        markdown_lines.append(f"?{input_type}[{input_placeholder}]({label}){id_suffix}")
+                    elif tag_name == 'a':
+                        href = await element.evaluate("el => el.href")
+                        text = await element.inner_text()
+                        markdown_lines.append(f"[{text}]({href}){id_suffix}")
+                    elif tag_name == 'button':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"?button[{text}]{id_suffix}")
+                    elif tag_name == 'select':
+                        options = await element.query_selector_all("option")
+                        option_texts = [await option.inner_text() for option in options]
+                        label = await element.evaluate("el => el.previousElementSibling ? el.previousElementSibling.innerText : ''")
+                        markdown_lines.append(f'?select["{", ".join(option_texts)}"]({label}){id_suffix}')
+                    self.id_count += 1
+                else:
+                    click = await element.evaluate("el => el.ondblclick !== null || el.onclick !== null")
+                    if click:
+                        self.clickable_ids[self.id_count] = element
+                        id_suffix = f"${self.id_count}"
+                        self.id_count += 1
+                    else:
+                        id_suffix = ""
+
+                    if tag_name == 'h1':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"# {text}{id_suffix}")
+                    elif tag_name == 'h2':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"## {text}{id_suffix}")
+                    elif tag_name == 'h3':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"### {text}{id_suffix}")
+                    elif tag_name == 'h4':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"#### {text}{id_suffix}")
+                    elif tag_name == 'h5':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"##### {text}{id_suffix}")
+                    elif tag_name == 'h6':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"###### {text}{id_suffix}")
+                    elif tag_name == 'p':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"{text}{id_suffix}")
+                    elif tag_name == 'strong':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"**{text}**{id_suffix}")
+                    elif tag_name == 'em':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"*{text}*{id_suffix}")
+                    elif tag_name == 'b':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"**{text}**{id_suffix}")
+                    elif tag_name == 'i':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"*{text}*{id_suffix}")
+                    elif tag_name == 'mark':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"`{text}`{id_suffix}")
+                    elif tag_name == 'blockquote':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"> {text}{id_suffix}")
+                    elif tag_name == 'pre':
+                        text = await element.inner_text()
+                        markdown_lines.append(f"```\n{text}\n```{id_suffix}")
+                    elif tag_name == 'table':
+                        rows = await element.query_selector_all("tr")
+                        table_markdown = []
+                        for row in rows:
+                            cells = await row.query_selector_all("td, th")
+                            cell_texts = [await cell.inner_text() for cell in cells]
+                            table_markdown.append("| " + " | ".join(cell_texts) + " |")
+                        markdown_lines.append("\n".join(table_markdown))
+                    elif tag_name == 'ul':
+                        items = await element.query_selector_all("li")
+                        for item in items:
+                            text = await item.inner_text()
+                            markdown_lines.append(f"- {text}{id_suffix}")
+                    elif tag_name == 'ol':
+                        items = await element.query_selector_all("li")
+                        for index, item in enumerate(items, start=1):
+                            text = await item.inner_text()
+                            markdown_lines.append(f"{index}. {text}{id_suffix}")
+                    else:
+                        parent_text = await element.evaluate("el => Array.from(el.childNodes).filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent.trim()).join(' ')")
+                        parent_text = parent_text.strip()
+                        markdown_lines.append(parent_text)
+                        
+                    if markdown_lines[-1] == '' or markdown_lines[-1].isspace():
+                        del markdown_lines[-1]
+                    elif len(markdown_lines) >= max_lines:
+                        return "\n".join(markdown_lines)
+                    
         
-        # Counter for interactive elements
-        id_counter = 0
+        # id_count is 1 bigger than actual size
+        return "\n".join(markdown_lines)
 
-        # Function to recursively parse elements
-        def parse_element(element, indent_level=0):
-            nonlocal id_counter
-            
-            # if element.is_hidden():
-            #     return ""
-                
-            
-            tag_name = element.evaluate('el => el.tagName.toLowerCase()')
-            content = ""
+    async def click(self, id, double: bool):
+        element = self.clickable_ids[id]
+        if element:
+            if double:
+                await element.dblclick()
+            else:
+                await element.click()
+        else:
+            return False
 
-            # Handle headings
-            if tag_name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                level = int(tag_name[1])
-                return '#' * level + ' ' + element.inner_text() + '\n'
+    async def fill_in(self, id, input_value):
+        element = self.clickable_ids[id]
+        if element:
+            await element.fill(input_value)
+        else:
+            return False
 
-            # Handle text formatting
-            if tag_name in ['strong', 'b']:
-                content = f"**{element.inner_text()}**"
-            elif tag_name in ['em', 'i']:
-                content = f"*{element.inner_text()}*"
-            elif tag_name == 'mark':
-                content = f"=={element.inner_text()}=="
-            elif tag_name == 'blockquote':
-                content = '> ' + element.inner_text()
-            elif tag_name == 'pre':
-                content = "```\n" + element.inner_text() + "\n```"
-            elif tag_name == 'p':
-                content = element.inner_text() + "\n"
+    async def select(self, id, option_text):
+        element = self.clickable_ids[id]
+        if element:
+            await element.select_option(option_text)
+            return
+        else:
+            return False
 
-            # Handle lists
-            if tag_name in ['ul', 'ol']:
-                list_items = element.query_selector_all('li')
-                for item in list_items:
-                    bullet = '- ' if tag_name == 'ul' else '1. '
-                    content += '  ' * indent_level + bullet + parse_element(item, indent_level + 1).strip() + '\n'
+# For testing purposes
+async def main(url):
+    interaction = await WebPageInteraction().open()
+    await interaction.navigate(url)
+    markdown_output = await interaction.get_markdown()
+    print(markdown_output)
+    await interaction.close()
 
-            # Handle links and images
-            if tag_name == 'a':
-                href = element.get_attribute('href')
-                content = f"[{element.inner_text()}]({href})\n"
-            elif tag_name == 'img':
-                src = element.get_attribute('src')
-                alt = element.get_attribute('alt') or ''
-                content = f"![{alt}]({truncate_end(src,30)})\n"
-
-            # Handle tables
-            if tag_name == 'table':
-                rows = element.query_selector_all('tr')
-                for row in rows:
-                    cells = row.query_selector_all('td, th')
-                    content += '|' + '|'.join([cell.inner_text() for cell in cells]) + '|\n'
-
-            # Handle forms
-            if tag_name in ['input', 'textarea', 'button', 'select']:
-                placeholder = element.get_attribute('placeholder') or ''
-                type_attr = element.get_attribute('type') or 'text'
-                label = element.get_attribute('label') or ''
-                if tag_name == 'input':
-                    content = f"input[{placeholder}]({type_attr}){{{label}}}${id_counter}\n"
-                    id_counter += 1
-                elif tag_name == 'textarea':
-                    content = f"input[{placeholder}](textarea){{{label}}}${id_counter}\n"
-                    id_counter += 1
-                elif tag_name == 'button':
-                    content = f"button[{element.inner_text()}]{{{label}}}${id_counter}\n"
-                    id_counter += 1
-                elif tag_name == 'select':
-                    options = element.query_selector_all('option')
-                    option_texts = [opt.inner_text() for opt in options]
-                    content = f'select[{", ".join(option_texts)}]{{{label}}}${id_counter}\n'
-                    id_counter += 1
-
-            # Handle semantic tags
-            if tag_name in ['header', 'footer', 'nav', 'article', 'section', 'aside', 'main']:
-                content = tag_name + '\n'
-
-            # Loop through all child elements
-            children = element.query_selector_all(':scope > *')
-            for child in children:
-                child_content = parse_element(child, indent_level + 1)
-                if child_content:
-                    content += '  ' * indent_level + child_content
-
-            return content
-
-        # Start parsing from the body
-        body = page.query_selector('body')
-        airform_content = "title=" + truncate_end(page.title(), 30) + "\n"
-        airform_content += parse_element(body)
-        browser.close()
-        return airform_content
-
-# Example usage
-output = convert_to_airform("https://jamaro.net")
-print(output)
+if __name__ == "__main__":
+    asyncio.run(main("https://duckduckgo.com/?q=Jamaro+Mooibroek+age"))
