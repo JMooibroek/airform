@@ -24,12 +24,17 @@ class WebPageInteraction:
         return s if len(s) <= max_length else f"...{s[-max_length:]}"
 
     async def navigate(self, url):
-        await self.page.goto(url)
+        """Navigate to url, returns True on success"""
+        try:
+            await self.page.goto(url, wait_until="load")
+            return True, f"Navigated to {url}"
+        except:
+            return False, "Error: could not retrieve page. Are you sure this page exists?"
 
     async def close(self):
         await self.browser.close()
 
-    async def get_markdown(self, max_lines):
+    async def get_markdown(self, max_lines=0):
         page_title = await self.page.title()
         elements = await self.page.query_selector_all("body *")
         markdown_lines = [f"title={page_title}"]
@@ -55,6 +60,10 @@ class WebPageInteraction:
                         input_placeholder = await element.evaluate("el => el.placeholder") or ""
                         label = await element.evaluate("el => el.previousElementSibling ? el.previousElementSibling.innerText : ''")
                         markdown_lines.append(f"?{input_type}[{input_placeholder}]({label}){id_suffix}")
+                    elif tag_name == 'textarea':
+                        input_placeholder = await element.inner_text()
+                        label = await element.evaluate("el => el.previousElementSibling ? el.previousElementSibling.innerText : ''")
+                        markdown_lines.append(f"?textarea[{input_placeholder}]({label}){id_suffix}")
                     elif tag_name == 'a':
                         href = await element.evaluate("el => el.href")
                         text = await element.inner_text()
@@ -144,37 +153,57 @@ class WebPageInteraction:
                         
                     if markdown_lines[-1] == '' or markdown_lines[-1].isspace():
                         del markdown_lines[-1]
-                    elif len(markdown_lines) >= max_lines:
+                    elif len(markdown_lines) >= max_lines and max_lines != 0:
                         return "\n".join(markdown_lines)
                     
         
         # id_count is 1 bigger than actual size
         return "\n".join(markdown_lines)
 
-    async def click(self, id, double: bool):
+    async def click(self, id, double_click: bool):
+        """Clicks on element, returns True on success"""
         element = self.clickable_ids[id]
         if element:
-            if double:
-                await element.dblclick()
+            if double_click:
+                try:
+                    await element.dblclick()
+                except:
+                    return False, "Error: could not click on element. Are you sure this is a button/link?"
+                return True, f"Clicked on ${id}"
             else:
-                await element.click()
+                try:
+                    await element.click()
+                except:
+                    return False, "Error: could not double click on element. Are you sure this is a button/link?"
+                return True, f"Double clicked on ${id}"
         else:
-            return False
+            return False, "Error: element does not exist"
 
-    async def fill_in(self, id, input_value):
+    async def fill_in(self, id, input_value, enter: bool):
+        """Fills input element, returns True on success"""
         element = self.clickable_ids[id]
         if element:
-            await element.fill(input_value)
+            try:
+                await element.fill(input_value)
+            except:
+                return False, "Error: could not fill element. Are you sure this is an input?"
+            if enter:
+                await element.press("Enter")
+            return True, f"Filled in ${id}, with value {input_value}."
         else:
-            return False
+            return False, "Error: element does not exist"
 
     async def select(self, id, option_text):
+        """Selects element, returns True on success"""
         element = self.clickable_ids[id]
         if element:
-            await element.select_option(option_text)
-            return
+            try:
+                await element.select_option(option_text)
+            except:
+                return False, "Error: could select element. Are you sure this is a select and the value is correct?"
+            return True, f"Selected {option_text} from ${id}"
         else:
-            return False
+            return False, "Error: element does not exist"
 
 # For testing purposes
 async def main(url):
@@ -185,4 +214,9 @@ async def main(url):
     await interaction.close()
 
 if __name__ == "__main__":
-    asyncio.run(main("https://duckduckgo.com/?q=Jamaro+Mooibroek+age"))
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(main("https://jamaro.net/"))
+    except KeyboardInterrupt:
+        pass
