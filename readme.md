@@ -15,6 +15,8 @@ Airform is a HTML to Flavored Markdown formatter, made for LLM.
 > venv\Scripts\activate
 > python openai_async_example.py
 ```
+# ERROR TODO
+* if function called that doesn't exist
 
 # TODO
 * Create scroll tool? Helps with limited context (e.g. Showing line 50-100)
